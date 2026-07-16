@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { Coord, GameState, Piece, idx } from '../engine';
 import { theme } from '../theme';
+import { PieceGlyph } from './pieces';
 
 interface BoardProps {
   state: GameState;
@@ -27,56 +28,11 @@ function PieceView({
   cell: number;
   liftIndex: number;
 }) {
-  const fill = piece.player === 1 ? theme.p1 : theme.p2;
-  const edge = piece.player === 1 ? theme.p1Edge : theme.p2Edge;
-  const size = cell * 0.62;
   const offset = -liftIndex * Math.max(2, cell * 0.055);
-
-  if (piece.type === 'C') {
-    return (
-      <View
-        style={{
-          position: 'absolute',
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          backgroundColor: fill,
-          borderWidth: 2,
-          borderColor: edge,
-          transform: [{ translateY: offset }],
-        }}
-      />
-    );
-  }
-  if (piece.type === 'S') {
-    return (
-      <View
-        style={{
-          position: 'absolute',
-          width: size * 0.38,
-          height: size,
-          borderRadius: 3,
-          backgroundColor: fill,
-          borderWidth: 2,
-          borderColor: edge,
-          transform: [{ rotate: '45deg' }, { translateY: offset }],
-        }}
-      />
-    );
-  }
   return (
-    <View
-      style={{
-        position: 'absolute',
-        width: size,
-        height: size,
-        borderRadius: 4,
-        backgroundColor: fill,
-        borderWidth: 2,
-        borderColor: edge,
-        transform: [{ translateY: offset }],
-      }}
-    />
+    <View style={{ position: 'absolute', transform: [{ translateY: offset }] }}>
+      <PieceGlyph piece={piece} size={cell * 0.62} />
+    </View>
   );
 }
 

@@ -13,6 +13,7 @@ import {
   Direction,
   GameState,
   Move,
+  Piece,
   StackMove,
   StoneType,
   gameToPtn,
@@ -24,6 +25,7 @@ import {
 import { useGameStore } from '../store/gameStore';
 import { Board } from '../components/Board';
 import { Button } from '../components/common';
+import { PieceGlyph, StackPiecePicker } from '../components/pieces';
 import { theme, fontSizes } from '../theme';
 
 type Interaction =
@@ -194,6 +196,15 @@ export function GameScreen({ onExit, onRules }: { onExit: () => void; onRules: (
     }
   };
 
+  /** pieces still in hand, bottom-first (the order they will be dropped) */
+  const carriedPieces = (
+    i: Extract<Interaction, { mode: 'moving' }>
+  ): Piece[] => {
+    const sq = squareAt(state, i.from);
+    const dropped = i.drops.reduce((a, b) => a + b, 0);
+    return sq.slice(sq.length - i.pickup + dropped);
+  };
+
   const dropOptions = (
     i: Extract<Interaction, { mode: 'moving' }> & { pending: Coord }
   ): number[] => {
@@ -297,23 +308,38 @@ export function GameScreen({ onExit, onRules }: { onExit: () => void; onRules: (
 
       {interaction.mode === 'moving' && (
         <View style={styles.movingBar}>
-          <Text style={styles.dim}>
-            Carrying {interaction.pickup - interaction.drops.reduce((a, b) => a + b, 0)} of {interaction.pickup}
-          </Text>
-          {interaction.pending && (
-            <View style={styles.dropRow}>
-              <Text style={styles.dim}>Drop:</Text>
-              {dropOptions({ ...interaction, pending: interaction.pending }).map(
-                (d) => (
-                  <Button
-                    key={d}
-                    label={String(d)}
-                    onPress={() => chooseDrop(d)}
-                    style={{ paddingVertical: 6, paddingHorizontal: 14 }}
-                  />
-                )
-              )}
-            </View>
+          {interaction.pending ? (
+            <>
+              <Text style={styles.dim}>
+                Drop how many? Pieces land in this order:
+              </Text>
+              <StackPiecePicker
+                items={(() => {
+                  const opts = dropOptions({
+                    ...interaction,
+                    pending: interaction.pending,
+                  });
+                  return carriedPieces(interaction).map((piece, i) => ({
+                    piece,
+                    n: i + 1,
+                    enabled: opts.includes(i + 1),
+                  }));
+                })()}
+                onPick={chooseDrop}
+              />
+            </>
+          ) : (
+            <>
+              <Text style={styles.dim}>
+                In hand ({carriedPieces(interaction).length}) — first drop on
+                the left
+              </Text>
+              <View style={styles.dropRow}>
+                {carriedPieces(interaction).map((p, i) => (
+                  <PieceGlyph key={i} piece={p} size={26} />
+                ))}
+              </View>
+            </>
           )}
           <Button
             label="Cancel"
@@ -388,31 +414,41 @@ export function GameScreen({ onExit, onRules }: { onExit: () => void; onRules: (
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Pick up how many?</Text>
-            <View style={styles.dropRow}>
-              {interaction.mode === 'pickCount' &&
-                [...new Set(
-                  stackMovesFrom(interaction.from).map((m) =>
-                    m.drops.reduce((a, b) => a + b, 0)
-                  )
-                )]
-                  .sort((a, b) => a - b)
-                  .map((n) => (
-                    <Button
-                      key={n}
-                      label={String(n)}
-                      onPress={() =>
-                        setInteraction({
-                          mode: 'moving',
-                          from: (interaction as Extract<Interaction, { mode: 'pickCount' }>).from,
-                          pickup: n,
-                          dir: null,
-                          drops: [],
-                          pending: null,
-                        })
-                      }
-                    />
-                  ))}
-            </View>
+            {interaction.mode === 'pickCount' && (
+              <>
+                <Text style={[styles.dim, styles.pickerHint]}>
+                  Top of the stack first — tap a piece to carry it and
+                  everything above it.
+                </Text>
+                <StackPiecePicker
+                  items={(() => {
+                    const from = interaction.from;
+                    const legal = new Set(
+                      stackMovesFrom(from).map((m) =>
+                        m.drops.reduce((a, b) => a + b, 0)
+                      )
+                    );
+                    return [...squareAt(state, from)]
+                      .reverse()
+                      .map((piece, i) => ({
+                        piece,
+                        n: i + 1,
+                        enabled: legal.has(i + 1),
+                      }));
+                  })()}
+                  onPick={(n) =>
+                    setInteraction({
+                      mode: 'moving',
+                      from: (interaction as Extract<Interaction, { mode: 'pickCount' }>).from,
+                      pickup: n,
+                      dir: null,
+                      drops: [],
+                      pending: null,
+                    })
+                  }
+                />
+              </>
+            )}
             <Button
               label="Cancel"
               kind="secondary"
@@ -622,6 +658,10 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.h2,
     fontWeight: '700',
     textAlign: 'center',
+  },
+  pickerHint: {
+    textAlign: 'center',
+    marginVertical: 10,
   },
   stackLine: {
     color: theme.text,
