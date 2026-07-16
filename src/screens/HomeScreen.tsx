@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Difficulty } from '../ai/ai';
+import { BotStyle, Difficulty } from '../ai/ai';
 import { useGameStore } from '../store/gameStore';
 import { Button, SegmentPicker } from '../components/common';
 import { theme, fontSizes } from '../theme';
@@ -18,6 +18,7 @@ export function HomeScreen({
 
   const [size, setSize] = useState(5);
   const [difficulty, setDifficulty] = useState<Difficulty>('easy');
+  const [style, setStyle] = useState<BotStyle>('balanced');
   const [humanFirst, setHumanFirst] = useState<'you' | 'ai'>('you');
 
   const hasGame = session !== null && session.state.result === null;
@@ -31,7 +32,7 @@ export function HomeScreen({
         <View style={styles.resumeCard}>
           <Text style={styles.resumeText}>
             Game in progress — {session!.state.size}×{session!.state.size},{' '}
-            {session!.difficulty} AI
+            {session!.difficulty} {session!.style} AI
           </Text>
           <Button label="Resume game" onPress={onPlay} />
         </View>
@@ -47,10 +48,23 @@ export function HomeScreen({
 
         <Text style={styles.label}>AI difficulty</Text>
         <SegmentPicker
-          options={['easy', 'medium', 'hard'] as Difficulty[]}
+          options={['easy', 'medium', 'hard', 'expert'] as Difficulty[]}
           value={difficulty}
           onChange={setDifficulty}
         />
+
+        {difficulty !== 'easy' && (
+          <>
+            <Text style={styles.label}>AI style</Text>
+            <SegmentPicker
+              options={
+                ['balanced', 'aggressor', 'roadrunner', 'fortress'] as BotStyle[]
+              }
+              value={style}
+              onChange={setStyle}
+            />
+          </>
+        )}
 
         <Text style={styles.label}>Who goes first</Text>
         <SegmentPicker
@@ -64,7 +78,7 @@ export function HomeScreen({
           label={hasGame ? 'Start new game (discards current)' : 'Start game'}
           onPress={() => {
             if (hasGame) clearGame();
-            newGame(size, difficulty, humanFirst === 'you');
+            newGame(size, difficulty, humanFirst === 'you', style);
             onPlay();
           }}
           style={{ marginTop: 22 }}

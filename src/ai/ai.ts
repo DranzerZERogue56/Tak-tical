@@ -1,10 +1,16 @@
 import { applyMove, getLegalMoves } from '../engine/moves';
 import { GameState, Move, Player, idx, opponent, topPiece } from '../engine/types';
-import { evaluate, WIN } from './evaluate';
+import { BotStyle, BOT_STYLES, DEFAULT_WEIGHTS, EvalWeights, evaluate, WIN } from './evaluate';
 
-export type Difficulty = 'easy' | 'medium' | 'hard';
+export type Difficulty = 'easy' | 'medium' | 'hard' | 'expert';
+export type { BotStyle };
+export { BOT_STYLES };
 
-const TIME_BUDGET_MS = 1500;
+const TIME_BUDGETS: Record<Exclude<Difficulty, 'easy'>, number> = {
+  medium: 900,
+  hard: 1500,
+  expert: 3000,
+};
 
 /** Yield to the event loop so the UI stays responsive during search. */
 function tick(): Promise<void> {
@@ -78,6 +84,7 @@ interface SearchCtx {
   deadline: number;
   nodes: number;
   aborted: boolean;
+  weights: EvalWeights;
 }
 
 function orderMoves(state: GameState, moves: Move[]): Move[] {
@@ -106,7 +113,7 @@ function alphaBeta(
     ctx.aborted = true;
     return 0;
   }
-  if (state.result || depth === 0) return evaluate(state, ctx.me);
+  if (state.result || depth === 0) return evaluate(state, ctx.me, ctx.weights);
 
   const maximizing = state.currentPlayer === ctx.me;
   const moves = orderMoves(state, getLegalMoves(state));
@@ -126,34 +133,75 @@ function alphaBeta(
   return best;
 }
 
+/**
+ * Drop root moves that hand the opponent an immediate win, as long as at
+ * least one safe move exists. Bounded by the deadline: whatever hasn't been
+ * checked when time runs low is kept (assumed safe).
+ */
+function filterBlunders(
+  state: GameState,
+  moves: { move: Move; after: GameState }[],
+  deadline: number
+): { move: Move; after: GameState }[] {
+  const safe: { move: Move; after: GameState }[] = [];
+  for (let i = 0; i < moves.length; i++) {
+    if (now() > deadline) {
+      safe.push(...moves.slice(i));
+      break;
+    }
+    const { after } = moves[i];
+    const foe = after.currentPlayer;
+    let losing = false;
+    for (const reply of getLegalMoves(after)) {
+      const next = applyMove(after, reply);
+      if (next.result && next.result.winner === foe) {
+        losing = true;
+        break;
+      }
+    }
+    if (!losing) safe.push(moves[i]);
+  }
+  return safe.length > 0 ? safe : moves;
+}
+
 async function pickSearch(
   state: GameState,
   maxDepth: number,
-  budgetMs: number
+  budgetMs: number,
+  weights: EvalWeights
 ): Promise<Move> {
   const me = state.currentPlayer;
   const deadline = now() + budgetMs;
-  const rootMoves = orderMoves(state, getLegalMoves(state));
+  const ordered = orderMoves(state, getLegalMoves(state));
 
-  let bestMove = rootMoves[0];
+  let rootMoves = ordered.map((move) => ({ move, after: applyMove(state, move) }));
+  let bestMove = rootMoves[0].move;
 
   // immediate win shortcut
-  for (const m of rootMoves) {
-    const after = applyMove(state, m);
-    if (after.result && after.result.winner === me) return m;
+  for (const { move, after } of rootMoves) {
+    if (after.result && after.result.winner === me) return move;
   }
 
-  // iterative deepening; keep the best fully-completed depth's answer
+  // never play into an immediate loss when avoidable; cap the time spent
+  // here so most of the budget still goes to the deep search
+  rootMoves = filterBlunders(state, rootMoves, now() + budgetMs * 0.3);
+  bestMove = rootMoves[0].move;
+  await tick();
+
+  // iterative deepening; keep the best fully-completed depth's answer and
+  // re-sort root moves by the previous depth's scores so pruning improves
   for (let depth = 1; depth <= maxDepth; depth++) {
-    const ctx: SearchCtx = { me, deadline, nodes: 0, aborted: false };
+    const ctx: SearchCtx = { me, deadline, nodes: 0, aborted: false, weights };
     let iterBest = -Infinity;
     let iterMove: Move | null = null;
-    for (const m of rootMoves) {
-      const v = alphaBeta(applyMove(state, m), depth - 1, iterBest, Infinity, ctx);
+    const scores = new Map<Move, number>();
+    for (const { move, after } of rootMoves) {
+      const v = alphaBeta(after, depth - 1, iterBest, Infinity, ctx);
       if (ctx.aborted) break;
+      scores.set(move, v);
       if (v > iterBest) {
         iterBest = v;
-        iterMove = m;
+        iterMove = move;
       }
       await tick(); // yield between root moves to keep the UI thread free
       if (now() > deadline) {
@@ -164,6 +212,9 @@ async function pickSearch(
     if (!ctx.aborted && iterMove) {
       bestMove = iterMove;
       if (iterBest >= WIN - 1000) break; // forced win found
+      rootMoves = [...rootMoves].sort(
+        (a, b) => (scores.get(b.move) ?? -Infinity) - (scores.get(a.move) ?? -Infinity)
+      );
     } else {
       break; // out of time; use previous depth's result
     }
@@ -175,22 +226,29 @@ async function pickSearch(
 /** Depth caps tuned so big boards stay inside the time budget. */
 function depthCap(difficulty: Difficulty, size: number): number {
   if (difficulty === 'medium') return size >= 7 ? 2 : 3;
-  return size >= 7 ? 3 : size >= 5 ? 4 : 5; // hard
+  if (difficulty === 'hard') return size >= 7 ? 3 : size >= 5 ? 4 : 5;
+  return size >= 7 ? 4 : size >= 5 ? 5 : 7; // expert
 }
 
 /**
  * Choose the AI's move. Async and chunked so it never blocks the UI thread
- * for long stretches; wall-clock capped at ~1.5s.
+ * for long stretches; wall-clock capped per difficulty (~0.9–3s).
  */
 export async function chooseMove(
   state: GameState,
   difficulty: Difficulty,
-  rng: () => number = Math.random
+  rng: () => number = Math.random,
+  style: BotStyle = 'balanced'
 ): Promise<Move> {
   if (difficulty === 'easy') {
     await tick();
     return pickEasy(state, rng);
   }
-  const budget = difficulty === 'medium' ? TIME_BUDGET_MS * 0.6 : TIME_BUDGET_MS;
-  return pickSearch(state, depthCap(difficulty, state.size), budget);
+  const weights = BOT_STYLES[style] ?? DEFAULT_WEIGHTS;
+  return pickSearch(
+    state,
+    depthCap(difficulty, state.size),
+    TIME_BUDGETS[difficulty],
+    weights
+  );
 }

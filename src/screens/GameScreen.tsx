@@ -261,7 +261,7 @@ export function GameScreen({ onExit, onRules }: { onExit: () => void; onRules: (
     <View style={styles.container}>
       <View style={styles.headerRow}>
         <Text style={styles.title}>Tak {state.size}×{state.size}</Text>
-        <Text style={styles.dim}>{session.difficulty} AI</Text>
+        <Text style={styles.dim}>{session.difficulty} {session.style} AI</Text>
       </View>
 
       <View style={styles.reserveRow}>

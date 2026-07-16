@@ -9,13 +9,14 @@ import {
   deserializeState,
   serializeState,
 } from '../engine';
-import { Difficulty, chooseMove } from '../ai/ai';
+import { BotStyle, Difficulty, chooseMove } from '../ai/ai';
 
 const STORAGE_KEY = 'tak:session:v1';
 
 export interface Session {
   state: GameState;
   difficulty: Difficulty;
+  style: BotStyle;
   humanPlayer: Player;
   /** serialized snapshots taken before each human move, for undo */
   snapshots: string[];
@@ -24,6 +25,7 @@ export interface Session {
 interface PersistedSession {
   stateJson: string;
   difficulty: Difficulty;
+  style?: BotStyle;
   humanPlayer: Player;
   snapshots: string[];
 }
@@ -34,7 +36,12 @@ interface GameStore {
   hydrated: boolean;
 
   hydrate: () => Promise<void>;
-  newGame: (size: number, difficulty: Difficulty, humanFirst: boolean) => void;
+  newGame: (
+    size: number,
+    difficulty: Difficulty,
+    humanFirst: boolean,
+    style?: BotStyle
+  ) => void;
   playHumanMove: (move: Move) => void;
   runAiTurnIfNeeded: () => Promise<void>;
   undo: () => void;
@@ -50,6 +57,7 @@ async function persist(session: Session | null): Promise<void> {
     const p: PersistedSession = {
       stateJson: serializeState(session.state),
       difficulty: session.difficulty,
+      style: session.style,
       humanPlayer: session.humanPlayer,
       snapshots: session.snapshots,
     };
@@ -73,6 +81,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           session: {
             state: deserializeState(p.stateJson),
             difficulty: p.difficulty,
+            style: p.style ?? 'balanced',
             humanPlayer: p.humanPlayer,
             snapshots: p.snapshots ?? [],
           },
@@ -84,10 +93,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ hydrated: true });
   },
 
-  newGame: (size, difficulty, humanFirst) => {
+  newGame: (size, difficulty, humanFirst, style = 'balanced') => {
     const session: Session = {
       state: createInitialState(size),
       difficulty,
+      style,
       humanPlayer: humanFirst ? 1 : 2,
       snapshots: [],
     };
@@ -116,7 +126,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (session.state.currentPlayer === session.humanPlayer) return;
     set({ aiThinking: true });
     try {
-      const move = await chooseMove(session.state, session.difficulty);
+      const move = await chooseMove(
+        session.state,
+        session.difficulty,
+        Math.random,
+        session.style
+      );
       const cur = get().session;
       // the session may have changed (new game / undo) while thinking
       if (!cur || serializeState(cur.state) !== serializeState(session.state)) {
